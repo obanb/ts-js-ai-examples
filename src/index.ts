@@ -1,6 +1,7 @@
 import {Server} from "node:http";
 import express from 'express';
 import {main} from "./hotels";
+import {documentLoaders} from "./program";
 
 const port = process.env.PORT;
 
@@ -15,10 +16,19 @@ export const startServer = async () => {
     });
     app.use(express.json({ limit: '50mb' }));
     // app.use(await router());
+
+    app.get('/sourcesJson', async(req, res) => {
+        await documentLoaders.fromJson()
+        res.send('ok')
+    })
+    app.get('/sourcesTxt', async(req, res) => {
+        await documentLoaders.fromTxt()
+        res.send('ok')
+    })
 };
 
 startServer().then(
     () => {
-        main();
+        // main();
     }
 ).catch(console.error);

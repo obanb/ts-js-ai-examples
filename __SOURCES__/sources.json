@@ -1,0 +1,10 @@
+[{
+  "segment": "Segment",
+  "subsegment": "Subsegment",
+  "metadata": {
+    "test": 1
+  },
+  "data": {
+    "test": 2
+  }
+}]
