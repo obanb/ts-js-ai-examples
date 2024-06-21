@@ -3,16 +3,15 @@ import {RecursiveCharacterTextSplitter} from "langchain/text_splitter";
 import {Document} from "@langchain/core/documents";
 import * as fs from "fs";
 import {HotelSourceDocument} from "./types";
+import {Pinecone, ServerlessSpecCloudEnum} from '@pinecone-database/pinecone';
+import {PineconeStore} from "@langchain/pinecone";
+import {OpenAIEmbeddings} from "@langchain/openai";
 
 
 const __SOURCE_DIR__ = './__SOURCES__'
 
-// Use cosine similarity when the context and relative importance of features are more critical than their absolute values. This is often the case in text-based queries and natural language processing.
-// Use dot product when the magnitude of overlap is important, which might be relevant in scenarios where the total number of matching features matters.
 
-// collection group of indexes
-
-export const documentLoaders = {
+export const DocumentService = {
     fromTxt: async(): Promise<Document[]> => {
         const loader = new TextLoader(`${__SOURCE_DIR__}/sources.txt`)
 
@@ -41,5 +40,63 @@ export const documentLoaders = {
         console.log(docs)
 
         return docs;
+    }
+}
+
+export  const PineconeService = (serverlessSpec:{
+    cloud: ServerlessSpecCloudEnum,
+    region: string
+}) => {
+    let pineconeClient: Pinecone | null = null;
+    return {
+        init: () => {
+            pineconeClient = new Pinecone({
+                apiKey: process.env.PINECONE_KEY!,
+            });
+        },
+        index: {
+            create: async(name: string) => {
+                const indexes = await pineconeClient!.listIndexes();
+
+                const existingIndex = indexes.indexes?.map((index) => index.name).includes(name);
+                if(existingIndex) {
+                    console.log(`Index ${name} already exists`);
+                    return
+                }
+                // pinecone index is not immediately ready to use, await is just for request completion
+                await pineconeClient!.createIndex({
+                    name,
+                    // 1536 is the default dimension for OpenAI embeddings which im using
+                    dimension: 1536,
+                    //  cosine because context and relative importance of features are more critical than their absolute values
+                    metric: 'cosine',
+                    spec: {
+                        serverless: serverlessSpec
+                    }
+                })
+                console.log(`Index ${name} request completed..`)
+            },
+            get: (name: string) => {
+                return pineconeClient!.index(name)
+            },
+            describe: async(name: string) => {
+                const index = await pineconeClient!.describeIndex(name)
+                return index.status.ready
+            },
+        },
+        store: {
+            fromDocuments: async(indexName: string, docs: Document[]) => {
+                const index = pineconeClient!.index(indexName)
+
+                const store = await PineconeStore.fromDocuments(docs, new OpenAIEmbeddings(), {
+                    pineconeIndex: index,
+                    maxConcurrency: 5,
+                });
+
+                console.log(`Store created for index ${indexName}..`)
+
+                return store;
+            },
+        }
     }
 }
