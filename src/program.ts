@@ -1,33 +1,47 @@
-import {TextLoader} from "langchain/document_loaders/fs/text";
-import {RecursiveCharacterTextSplitter} from "langchain/text_splitter";
-import {Document} from "@langchain/core/documents";
-import * as fs from "fs";
+import OpenAI from "openai";
+import {ChatOpenAI, OpenAIEmbeddings} from "@langchain/openai";
+import {Pinecone} from "@pinecone-database/pinecone";
+import fs from "fs";
 import {HotelSourceDocument} from "./types";
-import {Pinecone, ServerlessSpecCloudEnum} from '@pinecone-database/pinecone';
+import {Document} from "@langchain/core/documents";
 import {PineconeStore} from "@langchain/pinecone";
-import {OpenAIEmbeddings} from "@langchain/openai";
-
 
 const __SOURCE_DIR__ = './__SOURCES__'
+const __PINECONE_IDX__ = 'rag-chat-01'
 
+export const ragChat = async() => {
+    const openaiClient = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY!
+    });
+    const model = new ChatOpenAI({
+        modelName: 'gpt-3.5-turbo',
+        temperature: 0.7,
+    })
+    // instance level context for demonstration
+    const __CTX__: OpenAI.Chat.Completions.ChatCompletionMessageParam[]  = []
 
-export const DocumentService = {
-    fromTxt: async(): Promise<Document[]> => {
-        const loader = new TextLoader(`${__SOURCE_DIR__}/sources.txt`)
+    const pineconeClient = new Pinecone({
+        apiKey: process.env.PINECONE_KEY!,
+    });
 
-        const splitter = new RecursiveCharacterTextSplitter({
-            separators: [`###\r\n`],
-            chunkSize: 1000,
-        });
+    const indexes = await pineconeClient!.listIndexes();
+    const existingIndex = indexes.indexes?.map((index) => index.name).includes(__PINECONE_IDX__);
+    if(!existingIndex) {
+        console.log(`Creating Pinecone Index ${__PINECONE_IDX__}..`)
+        await pineconeClient!.createIndex({
+            name: __PINECONE_IDX__,
+            // 1536 is the default dimension for OpenAI embeddings which im using
+            dimension: 1536,
+            //  cosine because context and relative importance of features are more critical than their absolute values
+            metric: 'cosine',
+            spec: {
+                serverless: {
+                    cloud:  'aws',
+                    region: 'us-east-1'
+                }
+            }
+        })
 
-        const docs = await loader.load();
-        const splittedDocs = await splitter.splitDocuments(docs)
-
-        console.log(splittedDocs)
-
-        return splittedDocs;
-    },
-    fromJson: async(): Promise<Document[]> => {
         const fileContent = fs.readFileSync(`${__SOURCE_DIR__}/sources.json`, {encoding: 'utf-8'});
 
         const sourceData: HotelSourceDocument[] = JSON.parse(fileContent);
@@ -37,66 +51,34 @@ export const DocumentService = {
             pageContent: `[${sourceDoc.segment}][${sourceDoc.subsegment}] - ${JSON.stringify(sourceDoc.data)}`
         }));
 
-        console.log(docs)
+        const pineconeIndex = pineconeClient.Index(__PINECONE_IDX__);
 
-        return docs;
+        await PineconeStore.fromDocuments(docs, new OpenAIEmbeddings(), {
+            pineconeIndex,
+            maxConcurrency: 5,
+        });
     }
-}
 
-export  const PineconeService = (serverlessSpec:{
-    cloud: ServerlessSpecCloudEnum,
-    region: string
-}) => {
-    let pineconeClient: Pinecone | null = null;
+    const pineconeIndex = pineconeClient.Index(__PINECONE_IDX__);
+
+    const vectorStore = await PineconeStore.fromExistingIndex(
+        new OpenAIEmbeddings(),
+        { pineconeIndex }
+    );
+
+
     return {
-        init: () => {
-            pineconeClient = new Pinecone({
-                apiKey: process.env.PINECONE_KEY!,
-            });
-        },
-        index: {
-            create: async(name: string) => {
-                const indexes = await pineconeClient!.listIndexes();
+        chat: async (prompt: string) => {
+            // 1. create OpenAI embedding for query against vector database - if needed - we dont need do this because of langchain vector store
+            // const res = await openaiClient!.embeddings.create({
+            //     model: 'text-embedding-3-small',
+            //     input: prompt
+            // });
+            // const embedding = res.data[0].embedding;
 
-                const existingIndex = indexes.indexes?.map((index) => index.name).includes(name);
-                if(existingIndex) {
-                    console.log(`Index ${name} already exists`);
-                    return
-                }
-                // pinecone index is not immediately ready to use, await is just for request completion
-                await pineconeClient!.createIndex({
-                    name,
-                    // 1536 is the default dimension for OpenAI embeddings which im using
-                    dimension: 1536,
-                    //  cosine because context and relative importance of features are more critical than their absolute values
-                    metric: 'cosine',
-                    spec: {
-                        serverless: serverlessSpec
-                    }
-                })
-                console.log(`Index ${name} request completed..`)
-            },
-            get: (name: string) => {
-                return pineconeClient!.index(name)
-            },
-            describe: async(name: string) => {
-                const index = await pineconeClient!.describeIndex(name)
-                return index.status.ready
-            },
-        },
-        store: {
-            fromDocuments: async(indexName: string, docs: Document[]) => {
-                const index = pineconeClient!.index(indexName)
+            const results = await vectorStore.similaritySearch(prompt, 1);
 
-                const store = await PineconeStore.fromDocuments(docs, new OpenAIEmbeddings(), {
-                    pineconeIndex: index,
-                    maxConcurrency: 5,
-                });
-
-                console.log(`Store created for index ${indexName}..`)
-
-                return store;
-            },
+            console.log(JSON.stringify(results, null, 2))
         }
     }
 }

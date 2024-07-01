@@ -5,6 +5,26 @@
     "test": 1
   },
   "data": {
-    "test": 2
+    "restaurants": "vsechny restaurace maji otevreno v 18-19"
   }
-}]
+},
+  {
+    "segment": "Segment",
+    "subsegment": "Subsegment",
+    "metadata": {
+      "test": 1
+    },
+    "data": {
+      "animals": "muzete vzit psa a kocku"
+    }
+  },
+  {
+    "segment": "Segment",
+    "subsegment": "Subsegment",
+    "metadata": {
+      "test": 1
+    },
+    "data": {
+      "bars": "vsechny bary maji otevreno v 17-18"
+    }
+  }]

@@ -1,7 +1,7 @@
 import {Server} from "node:http";
 import express from 'express';
-import {main} from "./hotels";
-import {documentLoaders} from "./program";
+import {ragChat} from "./program";
+import fs from "fs";
 
 const port = process.env.PORT;
 
@@ -14,21 +14,20 @@ export const startServer = async () => {
             resolve(httpServer);
         });
     });
-    app.use(express.json({ limit: '50mb' }));
-    // app.use(await router());
 
-    app.get('/sourcesJson', async(req, res) => {
-        await documentLoaders.fromJson()
-        res.send('ok')
+    const chat = await ragChat();
+
+    app.use(express.json({ limit: '5mb' }));
+
+    app.get('/json', (req, res) => {
+        const json = fs.readFileSync(`__SOURCES__/sources.json`, {encoding: 'utf-8'});
+        res.send(JSON.stringify(JSON.parse(json), null, 2));
     })
-    app.get('/sourcesTxt', async(req, res) => {
-        await documentLoaders.fromTxt()
-        res.send('ok')
-    })
+
+    process.stdin.addListener('data', async function (input) {
+        let userInput = input.toString().trim();
+        await chat.chat(userInput);
+    });
 };
 
-startServer().then(
-    () => {
-        // main();
-    }
-).catch(console.error);
+startServer().catch(console.error);
